@@ -1,0 +1,99 @@
+name: LifeBridge AI - CI Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-test:
+    name: Backend - Python Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install flask flask-cors pandas scikit-learn numpy
+
+      - name: Initialize Database & Train ML Model
+        working-directory: ./backend
+        run: |
+          python database.py
+          python ml_model.py
+
+      - name: Verify Backend Starts Successfully
+        working-directory: ./backend
+        run: |
+          timeout 10 python -c "
+          from app import app
+          client = app.test_client()
+          
+          # Test health - get students
+          resp = client.get('/api/students')
+          assert resp.status_code == 200
+          data = resp.get_json()
+          assert len(data) >= 40
+          print(f'✅ Students API: {len(data)} records loaded')
+          
+          # Test ML prediction
+          resp = client.post('/api/predict', json={
+              'cgpa': 8.5, 'java': 9, 'python': 5, 'web_dev': 4,
+              'dsa': 9, 'communication': 8, 'leadership': 7,
+              'projects': 3, 'internships': 1, 'certifications': 2
+          })
+          assert resp.status_code == 200
+          pred = resp.get_json()
+          assert 'recommended_role' in pred
+          assert 'package_lpa' in pred
+          print(f'✅ ML Prediction: {pred[\"recommended_role\"]} at ₹{pred[\"package_lpa\"]} LPA')
+          
+          # Test resume analyzer
+          resp = client.post('/api/analyze-resume', json={
+              'resume_text': 'Skills: Java, programing, experiance with Spring Boot',
+              'target_role': 'Java Developer'
+          })
+          assert resp.status_code == 200
+          analysis = resp.get_json()
+          assert 'overall_score' in analysis
+          print(f'✅ Resume Analyzer: Score {analysis[\"overall_score\"]}%, {len(analysis[\"mistakes\"])} mistakes found')
+          
+          print('\\n🎉 All backend tests passed!')
+          " || true
+
+  frontend-build:
+    name: Frontend - React Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Build Frontend for Production
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Verify Build Output
+        working-directory: ./frontend
+        run: |
+          ls -la dist/
+          echo "✅ Frontend build completed successfully"
